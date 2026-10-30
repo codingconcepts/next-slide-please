@@ -1,115 +1,171 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"fmt"
-	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
-	"github.com/go-vgo/robotgo"
-	"github.com/nats-io/nats.go"
-	hook "github.com/robotn/gohook"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
+
+	"github.com/codingconcepts/next-slide-please/internal/keys"
+	"github.com/codingconcepts/next-slide-please/internal/present"
+	nspsignal "github.com/codingconcepts/next-slide-please/internal/signal"
+	"github.com/codingconcepts/next-slide-please/internal/speak"
+	"github.com/codingconcepts/next-slide-please/internal/tui"
 )
 
-var (
-	version string
-)
-
-const (
-	natsServer = "nats://next-slide-please.fly.dev:4222"
-)
+var version string
 
 func main() {
 	versionCmd := &cobra.Command{
 		Use:   "version",
 		Short: "Display the application's version",
-		Run:   executeVersion,
+		Run: func(*cobra.Command, []string) {
+			fmt.Println(version)
+		},
 	}
 
 	presenterCmd := &cobra.Command{
 		Use:     "present",
 		Short:   "Start Next-Slide-Please as the presenter (the person with the slides)",
-		Run:     executePresent,
-		Args:    cobra.ExactArgs(1),
-		Example: "nsp present [topic]\nnsp present 0PpTrMetgz",
+		RunE:    executePresent,
+		Args:    cobra.ExactArgs(0),
+		Example: "nsp present\nnsp present --code 0PpTrMetgz",
 	}
+	presenterCmd.Flags().String("code", "", "Code speakers will join with (generated if omitted)")
+	presenterCmd.Flags().String("server", nspsignal.DefaultServer, "Signalling server to meet speakers through")
+	presenterCmd.Flags().Bool("dry-run", false, "Show the keys received instead of pressing them")
 
 	speakerCmd := &cobra.Command{
 		Use:     "speak",
-		Short:   "Start Next-Slide-Please as the speaker (the person asking for the next slide)",
-		Run:     executeSpeak,
+		Short:   "Start Next-Slide-Please as a speaker (the person asking for the next slide)",
+		RunE:    executeSpeak,
 		Args:    cobra.ExactArgs(0),
-		Example: "nsp speak",
+		Example: "nsp speak --code 0PpTrMetgz --name alice",
 	}
+	speakerCmd.Flags().String("code", "", "Code shown by the presenter")
+	speakerCmd.Flags().String("server", nspsignal.DefaultServer, "Signalling server to meet the presenter through")
+	speakerCmd.Flags().String("name", "", "Name to show in the presenter's list")
+	speakerCmd.MarkFlagRequired("code")
+	speakerCmd.MarkFlagRequired("name")
 
-	rootCmd := &cobra.Command{}
+	rootCmd := &cobra.Command{
+		Use:          "nsp",
+		Short:        "Let someone else drive your slides",
+		SilenceUsage: true,
+	}
 	rootCmd.AddCommand(versionCmd, presenterCmd, speakerCmd)
 
 	if err := rootCmd.Execute(); err != nil {
-		log.Fatalf("error running nsp: %v", err)
+		os.Exit(1)
 	}
 }
 
-func executeVersion(cmd *cobra.Command, args []string) {
-	fmt.Println(version)
-}
-
-func executePresent(cmd *cobra.Command, args []string) {
-	nc, err := connect()
+func executePresent(cmd *cobra.Command, args []string) error {
+	code, server, err := connectionFlags(cmd)
 	if err != nil {
-		log.Fatalf("error connecting to nats server: %v", err)
+		return err
 	}
-	defer nc.Close()
 
-	topic := args[0]
-	sub, err := nc.Subscribe(topic, func(m *nats.Msg) {
-		direction := string(m.Data)
-		robotgo.KeyPress(direction)
-	})
-	defer sub.Unsubscribe()
-
-	fmt.Println("Subscribed for [left | right] direction keys, press Enter to close.")
-	fmt.Scanln()
-}
-
-func executeSpeak(cmd *cobra.Command, args []string) {
-	nc, err := connect()
+	dryRun, err := cmd.Flags().GetBool("dry-run")
 	if err != nil {
-		log.Fatalf("error connecting to nats server: %v", err)
-	}
-	defer nc.Close()
-
-	topic, err := generateID(10)
-	if err != nil {
-		log.Fatalf("error generating topic: %v", err)
+		return fmt.Errorf("reading dry-run flag: %w", err)
 	}
 
-	hook.Register(hook.KeyDown, []string{"left"}, pub(nc, topic, "left"))
-	hook.Register(hook.KeyDown, []string{"right"}, pub(nc, topic, "right"))
+	// Fail fast (rather than during a presentation).
+	if !dryRun && !keys.Supported() {
+		return fmt.Errorf(
+			"presenting is not supported on this platform yet; use --dry-run to test everything but the keypress",
+		)
+	}
 
-	fmt.Printf(
-		"Listening for [left | right] direction keys and publishing on %q, press ctrl+c to close.\n",
-		topic)
-
-	s := hook.Start()
-	<-hook.Process(s)
-}
-
-func pub(nc *nats.Conn, topic, key string) func(e hook.Event) {
-	return func(e hook.Event) {
-		if err := nc.Publish(topic, []byte(key)); err != nil {
-			log.Printf("error publishing message: %v", err)
+	if code == "" {
+		if code, err = generateID(10); err != nil {
+			return fmt.Errorf("generating code: %w", err)
 		}
 	}
-}
 
-func connect() (*nats.Conn, error) {
-	nc, err := nats.Connect(natsServer)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	session, err := present.New(ctx, server, code, presser(dryRun))
 	if err != nil {
-		return nil, fmt.Errorf("connecting: %w", err)
+		return err
 	}
 
-	return nc, nil
+	go session.Run(ctx)
+
+	return run(ctx, tui.NewPresenter(session, dryRun))
+}
+
+func executeSpeak(cmd *cobra.Command, args []string) error {
+	code, server, err := connectionFlags(cmd)
+	if err != nil {
+		return err
+	}
+
+	name, err := cmd.Flags().GetString("name")
+	if err != nil {
+		return fmt.Errorf("reading name flag: %w", err)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	// Connecting before the TUI starts keeps failures readable.
+	fmt.Printf("Connecting to the presenter on code %q...\n", code)
+
+	session, err := speak.Connect(ctx, server, code, name)
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+
+	return run(ctx, tui.NewSpeaker(session))
+}
+
+// run drives a bubbletea program and makes sure a signal tears it down, so
+// the terminal is always restored on the way out.
+func run(ctx context.Context, p *tea.Program) error {
+	go func() {
+		<-ctx.Done()
+		p.Quit()
+	}()
+
+	if _, err := p.Run(); err != nil {
+		return fmt.Errorf("running the interface: %w", err)
+	}
+
+	return nil
+}
+
+// presser decides what a key arriving from a speaker actually does. Under
+// --dry-run there is no presser at all, which is what makes it safe to run
+// both halves on one machine.
+func presser(dryRun bool) present.Presser {
+	if dryRun {
+		return nil
+	}
+
+	return keys.Press
+}
+
+func connectionFlags(cmd *cobra.Command) (string, string, error) {
+	code, err := cmd.Flags().GetString("code")
+	if err != nil {
+		return "", "", fmt.Errorf("reading code flag: %w", err)
+	}
+
+	server, err := cmd.Flags().GetString("server")
+	if err != nil {
+		return "", "", fmt.Errorf("reading server flag: %w", err)
+	}
+
+	return code, nspsignal.Server(server), nil
 }
 
 func generateID(size int) (string, error) {

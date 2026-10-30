@@ -1,0 +1,38 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "nsp-signal",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "observability": {
+    "enabled": true
+  },
+  // Wrangler creates the DNS record and certificate for a custom domain on
+  // first deploy. The zone has to already be in this Cloudflare account.
+  //
+  // workers_dev is deliberately left on as a fallback for when something is
+  // wrong with the custom domain. Both names route to this same script and
+  // therefore the same Durable Object namespace, so peers given different
+  // hostnames still meet in the same room.
+  "workers_dev": true,
+  "routes": [
+    {
+      "pattern": "signal.nextslideplease.run",
+      "custom_domain": true
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ROOMS",
+        "class_name": "Room"
+      }
+    ]
+  },
+  // SQLite-backed Durable Objects are the only kind available on the free plan.
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["Room"]
+    }
+  ]
+}

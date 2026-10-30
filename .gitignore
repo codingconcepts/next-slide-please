@@ -1,13 +1,3 @@
-# If you prefer the allow list template instead of the deny list, see community template:
-# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
-#
-# Binaries for programs and plugins
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-
 # Test binary, built with `go test -c`
 *.test
 
@@ -15,10 +5,14 @@
 *.out
 
 # Dependency directories (remove the comment below to include it)
-# vendor/
+node_modules/
 
 # Go workspace file
 go.work
 
 # Build artifacts
 releases/
+
+# The release target builds here before taring it up. Anchored so it cannot
+# match the cmd/nsp directory.
+/nsp
