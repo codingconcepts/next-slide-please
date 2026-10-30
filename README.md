@@ -7,13 +7,31 @@ Several people can join one presentation. The presenter sees them all in a list 
 
 ### Installation
 
-Download the tar file that corresponds to your OS (currently only macos is released; see [Platforms and permissions](#platforms-and-permissions)) from the [Releases](https://github.com/codingconcepts/next-slide-please/releases/latest) page, and extract it as follows:
+Homebrew:
 
 ``` sh
-tar -xvf dg_[VERSION]_[OS].tar.gz
+brew install codingconcepts/tap/nsp
 ```
 
-Move the resulting nsp file into your PATH.
+Or the install script, which picks the right binary for your OS and architecture and drops it in `/usr/local/bin`, asking for `sudo` only if it has to:
+
+``` sh
+curl -fsSL https://nextslideplease.run/install.sh | sh
+```
+
+Pass a tag to pin a version rather than taking the latest:
+
+``` sh
+curl -fsSL https://nextslideplease.run/install.sh | sh -s v0.1.0
+```
+
+Binaries for macOS, Linux and Windows are on the [Releases](https://github.com/codingconcepts/next-slide-please/releases/latest) page if you would rather fetch one yourself, and `go install github.com/codingconcepts/next-slide-please/cmd/nsp@latest` builds from source.
+
+Every platform gets a binary because speaking works everywhere. Only presenting is macOS only - see [Platforms and permissions](#platforms-and-permissions).
+
+``` sh
+nsp version
+```
 
 ### Usage
 
@@ -196,6 +214,29 @@ go run ./cmd/nsp speak --code 1234 --server http://localhost:8787 --name bob
 `--dry-run` exercises everything except the final keypress: signalling, ICE, the data channel, and the mute toggles. It also tells you whether a missing slide advance is a connection problem or an Accessibility permission problem.
 
 `make down` stops the whole local stack - both clients and the Worker.
+
+### Landing page
+
+`nextslideplease.run` is a single static page in [site](./site), deployed as a Cloudflare Workers assets project. It is a separate Worker from the signalling one so that editing the site never redeploys the thing presenters are connected to.
+
+``` sh
+make dev_site     # http://localhost:8787
+make deploy_site
+```
+
+Both targets copy [install.sh](./install.sh) into `site/public` first, so the script served at `https://nextslideplease.run/install.sh` is always the one in the repository rather than a second copy that can drift. That copy is gitignored.
+
+### Releasing
+
+Tag and push; everything else happens in [.github/workflows/release.yml](./.github/workflows/release.yml):
+
+``` sh
+make release VERSION=v0.1.0
+```
+
+The workflow builds all five targets from one Linux runner (`CGO_ENABLED=0` is what makes that possible), attaches the binaries to a GitHub release, and rewrites `Formula/nsp.rb` in [codingconcepts/homebrew-tap](https://github.com/codingconcepts/homebrew-tap) with the new version and checksums.
+
+Pushing to the tap needs a `RELEASE_PAT` repository secret - a personal access token with `contents: write` on `homebrew-tap`. The release itself uses the workflow's own `GITHUB_TOKEN`.
 
 ### Tests
 

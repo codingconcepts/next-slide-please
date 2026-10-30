@@ -1,0 +1,6 @@
+node_modules/
+.wrangler/
+
+# Copied in from the repo root by `make site_assets` so the script has one
+# home and the site cannot serve a stale copy of it.
+public/install.sh

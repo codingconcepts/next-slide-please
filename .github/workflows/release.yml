@@ -1,0 +1,135 @@
+name: Release binaries
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  # Presenting is macOS only, but a speaker needs nothing from the operating
+  # system, so every platform gets a binary. CGO_ENABLED=0 is what makes that
+  # possible from one runner: CoreGraphics is loaded at runtime rather than
+  # linked, so there is no C toolchain in the build.
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          EXT=""
+          if [ "$GOOS" = "windows" ]; then EXT=".exe"; fi
+          go build -ldflags "-s -w -X main.version=${VERSION}" -o "nsp-${GOOS}-${GOARCH}${EXT}" ./cmd/nsp
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nsp-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: nsp-*
+          retention-days: 1
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            nsp-*
+
+      # The tap lives in another repository, so GITHUB_TOKEN cannot reach it.
+      # RELEASE_PAT is a personal access token with contents write on
+      # codingconcepts/homebrew-tap.
+      - name: Update Homebrew tap
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+
+          SHA_DARWIN_ARM64=$(sha256sum nsp-darwin-arm64 | cut -d' ' -f1)
+          SHA_DARWIN_AMD64=$(sha256sum nsp-darwin-amd64 | cut -d' ' -f1)
+          SHA_LINUX_ARM64=$(sha256sum nsp-linux-arm64 | cut -d' ' -f1)
+          SHA_LINUX_AMD64=$(sha256sum nsp-linux-amd64 | cut -d' ' -f1)
+
+          git clone https://x-access-token:${GH_TOKEN}@github.com/codingconcepts/homebrew-tap.git
+          cd homebrew-tap
+
+          cat > Formula/nsp.rb << FORMULA
+          class Nsp < Formula
+            desc "Let someone else drive your slides"
+            homepage "https://nextslideplease.run"
+            version "${VERSION}"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/codingconcepts/next-slide-please/releases/download/v#{version}/nsp-darwin-arm64"
+                sha256 "${SHA_DARWIN_ARM64}"
+              end
+              on_intel do
+                url "https://github.com/codingconcepts/next-slide-please/releases/download/v#{version}/nsp-darwin-amd64"
+                sha256 "${SHA_DARWIN_AMD64}"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "https://github.com/codingconcepts/next-slide-please/releases/download/v#{version}/nsp-linux-arm64"
+                sha256 "${SHA_LINUX_ARM64}"
+              end
+              on_intel do
+                url "https://github.com/codingconcepts/next-slide-please/releases/download/v#{version}/nsp-linux-amd64"
+                sha256 "${SHA_LINUX_AMD64}"
+              end
+            end
+
+            def install
+              bin.install stable.url.split("/").last => "nsp"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/nsp version")
+            end
+          end
+          FORMULA
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/nsp.rb
+          git commit -m "nsp ${VERSION}"
+          git push

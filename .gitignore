@@ -10,9 +10,6 @@ node_modules/
 # Go workspace file
 go.work
 
-# Build artifacts
-releases/
-
-# The release target builds here before taring it up. Anchored so it cannot
-# match the cmd/nsp directory.
+# A stray `go build ./cmd/nsp` in the repo root. Anchored so it cannot match
+# the cmd/nsp directory.
 /nsp

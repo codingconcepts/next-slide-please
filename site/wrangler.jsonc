@@ -1,0 +1,26 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "nsp-site",
+  "compatibility_date": "2026-08-01",
+  // Assets only: there is no `main`, so this is a static deploy with no
+  // Worker script behind it and nothing to invoke. It is a separate project
+  // from the signalling Worker in ../signal on purpose - the site changing
+  // should never redeploy the thing presenters are connected to.
+  "assets": {
+    "directory": "./public",
+    "not_found_handling": "404-page"
+  },
+  // signal.nextslideplease.run belongs to the signalling Worker; this takes
+  // the apex and www. Wrangler creates the DNS records and certificates on
+  // first deploy, provided the zone is already in this Cloudflare account.
+  "routes": [
+    {
+      "pattern": "nextslideplease.run",
+      "custom_domain": true
+    },
+    {
+      "pattern": "www.nextslideplease.run",
+      "custom_domain": true
+    }
+  ]
+}

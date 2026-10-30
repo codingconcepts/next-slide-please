@@ -58,19 +58,34 @@ build:
 		-o ${DEV_BIN}/nsp ./cmd/nsp
 	@echo "==> installed $$(${DEV_BIN}/nsp version) to ${DEV_BIN}/nsp"
 
-# CGO_ENABLED=0 is the point rather than an optimisation: nsp reaches
+# Releasing is a tag push and nothing else. The workflow in
+# .github/workflows/release.yml builds every target, attaches the binaries to
+# a GitHub release, and rewrites Formula/nsp.rb in codingconcepts/homebrew-tap
+# so `brew install codingconcepts/tap/nsp` picks the new version up.
+#
+# CGO_ENABLED=0 is why one Linux runner can build all five: nsp reaches
 # CoreGraphics through purego at runtime, so there is no C toolchain in the
 # build and every target can be built from any machine.
+.PHONY: release
 release: validate_version
-	# macos
-	CGO_ENABLED=0 GOOS=darwin go build -ldflags "-X main.version=${VERSION}" -o nsp ./cmd/nsp;\
-	tar -zcvf ./releases/dg_${VERSION}_macOS.tar.gz ./nsp ;\
-
-	rm ./nsp
+	git tag -a ${VERSION} -m ${VERSION}
+	git push origin ${VERSION}
 
 deploy: build
 	(cd signal && npx wrangler deploy)
 
-dev_install: validate_version
-	tar -xvf ./releases/dg_${VERSION}_macOS.tar.gz
-	mv nsp ~/dev/bin
+# The install script has one home, at the repo root, and the site serves a
+# copy of it from https://nextslideplease.run/install.sh. Copying it in at
+# deploy time rather than keeping two files means the published script can
+# never drift from the one in the repository.
+.PHONY: site_assets
+site_assets:
+	cp install.sh site/public/install.sh
+
+.PHONY: deploy_site
+deploy_site: site_assets
+	(cd site && npx wrangler deploy)
+
+.PHONY: dev_site
+dev_site: site_assets
+	(cd site && npx wrangler dev)
