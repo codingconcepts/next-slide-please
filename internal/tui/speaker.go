@@ -35,7 +35,7 @@ type speakerModel struct {
 // NewSpeaker builds the speaker's program. Mouse reporting is on so the
 // buttons can be clicked as well as driven from the keyboard.
 func NewSpeaker(session *speak.Session) *tea.Program {
-	// Starts logging rather than enabled, because that is how a speaker
+	// Starts logging rather than enabled, because that's  how a speaker
 	// arrives at the presenter. The presenter's first verdict overwrites
 	// this within a moment of the channel opening.
 	return tea.NewProgram(

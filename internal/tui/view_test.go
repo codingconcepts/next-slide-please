@@ -1,10 +1,12 @@
 package tui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/codingconcepts/next-slide-please/internal/rtc"
 )
@@ -182,6 +184,112 @@ func TestPresenterShowsNothingToDoBeforeAnyoneJoins(t *testing.T) {
 
 	if !strings.Contains(view, "Waiting for someone to join") {
 		t.Errorf("empty presenter view should say it is waiting:\n%s", view)
+	}
+}
+
+// A global chord and the same key typed into this window are two routes to
+// one set of commands, and the whole point of the chords is that the
+// presenter can use either without thinking about which window is in front.
+// If the two ever disagree, they have to be learned separately.
+func TestChordsAndTypedKeysReachTheSameCommands(t *testing.T) {
+	cases := []struct {
+		typed tea.KeyMsg
+		chord string
+	}{
+		{tea.KeyMsg{Type: tea.KeyDown}, "down"},
+		{tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")}, "down"},
+		{tea.KeyMsg{Type: tea.KeyUp}, "up"},
+		{tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")}, "up"},
+	}
+
+	for _, c := range cases {
+		rows := []speakerRow{{id: "a"}, {id: "b"}, {id: "c"}}
+
+		typed, _ := presenterModel{rows: rows, cursor: 1}.Update(c.typed)
+		chord, _ := presenterModel{rows: rows, cursor: 1}.Update(hotkeyMsg{key: c.chord})
+
+		gotTyped := typed.(presenterModel).cursor
+		gotChord := chord.(presenterModel).cursor
+
+		if gotTyped != gotChord {
+			t.Errorf("%q left the cursor at %d but ctrl+opt+%s left it at %d",
+				c.typed.String(), gotTyped, c.chord, gotChord)
+		}
+
+		if gotTyped == 1 {
+			t.Errorf("%q did nothing at all", c.typed.String())
+		}
+	}
+}
+
+// Keys arriving in this window instead of the slides is the one failure that
+// looks exactly like nothing happening, so it is counted and said out loud.
+func TestAnArrowInThePresentersWindowIsReported(t *testing.T) {
+	model, _ := presenterModel{code: "abc"}.Update(tea.KeyMsg{Type: tea.KeyRight})
+
+	m := model.(presenterModel)
+	if m.stray != 1 {
+		t.Fatalf("a right arrow in the presenter's window was counted %d times", m.stray)
+	}
+
+	if !strings.Contains(m.View(), "where they do nothing") {
+		t.Errorf("the presenter is not told its window swallowed an arrow:\n%s", m.View())
+	}
+}
+
+// Every other way of finding out where a key is about to be typed involves
+// pressing one and watching what moves.
+func TestPresenterSaysWhereTheKeysAreGoing(t *testing.T) {
+	cases := []struct {
+		name  string
+		model presenterModel
+		want  string
+	}{
+		{
+			name:  "following focus",
+			model: presenterModel{code: "abc"},
+			want:  "whichever window has focus",
+		},
+		{
+			name: "nothing resolved yet",
+			model: presenterModel{code: "abc", options: PresenterOptions{
+				Target: func() (string, bool) { return "", false },
+			}},
+			want: "Waiting to see which application",
+		},
+		{
+			name: "aimed",
+			model: presenterModel{code: "abc", options: PresenterOptions{
+				Target: func() (string, bool) { return "Keynote", true },
+			}},
+			want: "Keynote",
+		},
+	}
+
+	for _, c := range cases {
+		if view := c.model.View(); !strings.Contains(view, c.want) {
+			t.Errorf("%s: view is missing %q:\n%s", c.name, c.want, view)
+		}
+	}
+
+	// Under --dry-run no key is pressed anywhere, so there is nowhere for one
+	// to go and nothing to say about it.
+	if view := (presenterModel{code: "abc", dryRun: true}).View(); strings.Contains(view, "Keys go to") {
+		t.Errorf("a dry run presenter claims its keys are going somewhere:\n%s", view)
+	}
+}
+
+// Hotkeys are the presenter's way out of the bind the list itself creates,
+// so being refused them is worth a line rather than silence.
+func TestPresenterSaysWhenItCouldNotTakeTheHotkeys(t *testing.T) {
+	m := presenterModel{code: "abc", options: PresenterOptions{
+		HotkeyErr: errors.New("creating an event tap: permission denied"),
+	}}
+
+	for _, want := range []string{"permission denied", "in front to steer"} {
+		if view := m.View(); !strings.Contains(view, want) {
+			t.Errorf("presenter view is missing %q:\n%s", want, view)
+		}
 	}
 }
 

@@ -19,6 +19,11 @@ const flashDuration = 250 * time.Millisecond
 // note that marks a speaker on this machine.
 const nameWidth = 28
 
+// HotkeyKeys are the keys the presenter's list answers to globally, held
+// with ctrl and option. Deliberately the same letters as the help line
+// promises locally: one set of bindings, two ways of reaching them.
+var HotkeyKeys = []string{"up", "down", "space", "a", "l", "n"}
+
 type speakerRow struct {
 	id      string
 	name    string
@@ -30,36 +35,70 @@ type speakerRow struct {
 	flash   time.Time
 }
 
+// PresenterOptions are the things the presenter's display needs to know that
+// the session cannot tell it: what the command line asked for, and what the
+// operating system was willing to give.
+type PresenterOptions struct {
+	// DryRun means no key is pressed anywhere.
+	DryRun bool
+
+	// Target names the application keys are being delivered to, and reports
+	// false while there is not one yet. Nil when the presenter has turned
+	// targeting off and keys follow focus as they always did.
+	Target func() (string, bool)
+
+	// Hotkeys carries nsp's global chords. Nil when they are off or could
+	// not be started, in which case HotkeyErr says which.
+	Hotkeys   <-chan string
+	HotkeyErr error
+}
+
 type presenterModel struct {
 	session *present.Session
 	code    string
 	dryRun  bool
+	options PresenterOptions
 
 	rows     []speakerRow
 	cursor   int
 	err      error
 	quitting bool
+
+	// stray counts arrow keys that arrived in this window. A presenter can
+	// press one by accident, but mostly these are a speaker's keys landing
+	// in the list instead of the slides, which is the one failure that looks
+	// exactly like nothing happening.
+	stray int
 }
 
 // NewPresenter builds the presenter's program. The session is already
 // listening on its code by the time this is called, so the code can be shown
 // immediately rather than after a round trip.
-func NewPresenter(session *present.Session, dryRun bool) *tea.Program {
+func NewPresenter(session *present.Session, options PresenterOptions) *tea.Program {
 	return tea.NewProgram(presenterModel{
 		session: session,
 		code:    session.Code(),
-		dryRun:  dryRun,
+		dryRun:  options.DryRun,
+		options: options,
 	})
 }
 
 func (m presenterModel) Init() tea.Cmd {
-	return waitFor(m.session.Events())
+	return tea.Batch(waitFor(m.session.Events()), waitForHotkey(m.options.Hotkeys))
 }
 
 func (m presenterModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		return m.onKey(msg)
+
+	case hotkeyMsg:
+		m.command(msg.key)
+
+		return m, waitForHotkey(m.options.Hotkeys)
+
+	case hotkeysDoneMsg:
+		return m, nil
 
 	case flashMsg:
 		// Nothing to change: the redraw this triggers is the point, since
@@ -78,17 +117,46 @@ func (m presenterModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m presenterModel) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
+	switch key := msg.String(); key {
 	case "ctrl+c", "q", "esc":
 		m.quitting = true
 		return m, tea.Quit
 
-	case "up", "k":
+	case "k":
+		m.command("up")
+
+	case "j":
+		m.command("down")
+
+	case " ", "enter":
+		m.command("space")
+
+	// An arrow in this window is very often a speaker's key that has landed
+	// here rather than on the slides, so it is counted and said out loud
+	// instead of being swallowed.
+	case "left", "right":
+		m.stray++
+
+	default:
+		m.command(key)
+	}
+
+	return m, nil
+}
+
+// command is one thing the presenter can ask for, named the same way whether
+// it was typed into this window or pressed as a global chord somewhere else.
+// Both routes have to agree, because the whole point of the chords is that
+// the presenter can use either without thinking about which window is in
+// front.
+func (m *presenterModel) command(key string) {
+	switch key {
+	case "up":
 		if m.cursor > 0 {
 			m.cursor--
 		}
 
-	case "down", "j":
+	case "down":
 		if m.cursor < len(m.rows)-1 {
 			m.cursor++
 		}
@@ -96,7 +164,7 @@ func (m presenterModel) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Space walks one speaker round muted, logging, enabled. Driving a talk
 	// is therefore always something the presenter did on purpose, and the
 	// stop on the way shows the keys arriving before they can move a slide.
-	case " ", "enter":
+	case "space":
 		if row := m.current(); row != nil {
 			m.setMode(m.cursor, row.mode.Next(row.local))
 		}
@@ -111,8 +179,6 @@ func (m presenterModel) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "n":
 		m.setAll(rtc.ModeMuted)
 	}
-
-	return m, nil
 }
 
 func (m presenterModel) onEvent(event present.Event) (tea.Model, tea.Cmd) {
@@ -179,10 +245,29 @@ func (m presenterModel) View() string {
 	if m.dryRun {
 		b.WriteString(labelStyle.Render("Dry run: every key is logged, none is pressed"))
 		b.WriteString("\n\n")
+	} else {
+		b.WriteString(m.destination())
+		b.WriteString("\n\n")
 	}
 
 	b.WriteString(panelStyle.Render(m.speakerList()))
 	b.WriteString("\n")
+
+	if m.stray > 0 {
+		b.WriteString(badStyle.Render(fmt.Sprintf(
+			"%d arrow keys have been pressed in this window, where they do nothing. "+
+				"If they were a speaker's, your slides are not where nsp is sending them.",
+			m.stray,
+		)))
+		b.WriteString("\n")
+	}
+
+	if m.options.HotkeyErr != nil {
+		b.WriteString(badStyle.Render(
+			"Hotkeys are off (" + m.options.HotkeyErr.Error() + "), so this window has to be in front to steer.",
+		))
+		b.WriteString("\n")
+	}
 
 	if m.hasLocal() {
 		b.WriteString(labelStyle.Render(
@@ -201,7 +286,34 @@ func (m presenterModel) View() string {
 		"↑/↓ select · space muted/logging/enabled · a enable all · l log all · n mute all · q quit",
 	))
 
+	if m.options.Hotkeys != nil {
+		b.WriteString("\n")
+		b.WriteString(helpStyle.Render(
+			"Hold ctrl+option with any of those from any window, and this one never has to come forward",
+		))
+	}
+
 	return b.String() + "\n"
+}
+
+// destination says where a speaker's key is about to be typed. Worth a line
+// of its own: every other way of finding out involves pressing one and
+// watching what moves.
+func (m presenterModel) destination() string {
+	if m.options.Target == nil {
+		return labelStyle.Render(
+			"Keys go to whichever window has focus, so keep your slides in front",
+		)
+	}
+
+	name, ok := m.options.Target()
+	if !ok {
+		return labelStyle.Render(
+			"Waiting to see which application your slides are in - switch to it once",
+		)
+	}
+
+	return labelStyle.Render("Keys go to ") + goodStyle.Render(name)
 }
 
 func (m presenterModel) speakerList() string {

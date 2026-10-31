@@ -44,7 +44,7 @@ The Worker's hostname is a **custom domain**, which means Cloudflare has to be a
    yyyy.ns.cloudflare.com
    ```
 
-   Leave this page open. Those two names go into Namecheap next, and they are specific to your account - do not copy them from anywhere else.
+   Leave this page open. Those two names go into Namecheap next, and they are specific to your account - don't copy them from anywhere else.
 
 ---
 
@@ -223,4 +223,8 @@ If you cannot remember the subdomain, `npx wrangler deploy` prints it again, or 
 | `/ice` returns STUN only, TURN expected | Secrets missing or wrong | `npx wrangler secret list`, re-put them, redeploy |
 | Clients hit the wrong host | They are an older build with a different `DefaultServer` compiled in | Rebuild, or pass `--server` explicitly on both halves |
 | Speaker gets "no presenter is waiting on this code" | Presenter not running, or the two are on different `--server` values | Start the presenter first; check both `--server` values match |
-| Keys arrive but slides do not move | macOS Accessibility permission not granted to the terminal | System Settings → Privacy & Security → Accessibility. Compare against `--dry-run` to confirm it is permission and not connectivity |
+| Keys arrive but slides don't move | macOS Accessibility permission not granted to the terminal | System Settings → Privacy & Security → Accessibility. Compare against `--dry-run` to confirm it is permission and not connectivity |
+| Keys arrive but slides don't move, and the list says `Keys go to` the wrong application | nsp followed the last application used, which was not the slides | Switch to the slides once, or pin it with `--target <name>` |
+| Keys arrive, the target is right, and slides still don't move | That application ignores events it was not focused for | `--targeted=false` to go back to following focus, and keep the slides in front |
+| The list reports arrow keys pressed in its own window | A speaker's keys are landing in the terminal rather than the slides | Same two rows above; the count is there to tell this apart from a dead connection |
+| `ctrl+option` chords do nothing | Event tap refused, or another application took the chord first | The list prints the reason under the speakers. Accessibility as above; `--hotkeys=false` if something else owns the chord |

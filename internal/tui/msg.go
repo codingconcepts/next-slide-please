@@ -17,6 +17,33 @@ type closedMsg struct{}
 // flashMsg forces a redraw once a row's highlight has expired.
 type flashMsg struct{}
 
+// hotkeyMsg is one of nsp's global chords, pressed somewhere other than the
+// presenter's own window. It carries the same key names bubbletea uses, so
+// the presenter can handle both through one switch.
+type hotkeyMsg struct{ key string }
+
+// hotkeysDoneMsg means the global listener has stopped and there is no point
+// waiting on it again.
+type hotkeysDoneMsg struct{}
+
+// waitForHotkey pulls the next global chord. A nil channel means hotkeys are
+// off, which is reported once rather than left as a command that never
+// returns.
+func waitForHotkey(ch <-chan string) tea.Cmd {
+	if ch == nil {
+		return nil
+	}
+
+	return func() tea.Msg {
+		key, ok := <-ch
+		if !ok {
+			return hotkeysDoneMsg{}
+		}
+
+		return hotkeyMsg{key: key}
+	}
+}
+
 // waitFor pulls the next event off a session channel. bubbletea runs each
 // command on its own goroutine, so blocking here is the intended way to wait.
 // Every handler that consumes an eventMsg must return this again, or the pump

@@ -49,6 +49,8 @@ Share this code
 │  0PpTrMetgz  │
 ╰──────────────╯
 
+Keys go to Keynote
+
 ╭─────────────────────────────────────────────────────╮
 │ 3 connected                                         │
 │ › Rob Reid                      enabled       → ×12 │
@@ -56,6 +58,7 @@ Share this code
 │   carol                         muted         -     │
 ╰─────────────────────────────────────────────────────╯
 ↑/↓ select · space muted/logging/enabled · a enable all · l log all · n mute all · q quit
+Hold ctrl+option with any of those from any window, and this one never has to come forward
 ```
 
 Every speaker is in one of three modes, and space walks the selected one round them:
@@ -75,6 +78,24 @@ Pass `--code` to choose the code yourself instead of having one generated:
 ``` sh
 nsp present --code nZRw9s0Tv7
 ```
+
+### Using the list during a talk
+
+A synthesised key goes where a real one would: to whichever window has focus. That is a problem for the list above, because bringing it to the front is exactly what stops your slides receiving anything - every key your speakers send lands in a terminal instead, and the talk looks like it has gone quiet. Two things get around it.
+
+**Keys are aimed at your slides rather than at the front window.** nsp watches which application you use and sends there, ignoring the terminal it was started from. Switch to your slides once and the line under the code says where the keys are going. If you would rather say it outright, name the application:
+
+``` sh
+nsp present --target Keynote
+```
+
+The match is a case insensitive substring, so `--target chrome` finds Google Chrome, and a name that matches nothing is reported before the talk rather than during it. A named application is looked up again as the talk runs, so quitting and reopening it does not strand the keys on a dead process.
+
+Not every application accepts a key it was not focused for, and the ones that ignore one ignore it quietly. If yours does, `--targeted=false` goes back to following focus.
+
+**The list answers to the same keys from anywhere.** Hold **ctrl+option** with `↑`, `↓`, space, `a`, `l` or `n` and it does what it would have done had you been looking at it - so you can mute a speaker without leaving your slides. Only those chords are intercepted; every other keystroke on the machine is untouched. `--hotkeys=false` turns them off.
+
+Both need the same Accessibility permission as pressing a key. If the hotkeys are refused the list says so rather than leaving you to wonder, and if an arrow key ever does land in the list it says that too, because a key going to the wrong window otherwise looks exactly like nothing happening.
 
 A speaker (anyone asking for the next slide) joins with the presenter's code:
 
@@ -98,9 +119,9 @@ sent →
 
 That line becomes `● connected · you can drive the slides` the moment the presenter promotes you, and `● muted` if they turn your keys off. Arrow keys drive the slides, and so does clicking the buttons. `--name` is what the presenter sees in their list, and is required: a list of speakers is only useful if the presenter can tell who is who.
 
-A speaker running on the presenter's own machine arrives **muted**, and goes no further than **logging**: there is no enabling it. The presenter's list marks it `(this machine)` next to its name, and space walks it between those two modes alone. Its keys would be typed into whichever window has focus - quite possibly that speaker's own terminal, which would read them as input and send them straight back, so the two would drive each other with nobody touching a keyboard. `a` cannot get it either: enabling everyone leaves it logging.
+A speaker running on the presenter's own machine arrives **muted**, and goes no further than **logging**: there is no enabling it. The presenter's list marks it `(this machine)` next to its name, and space walks it between those two modes alone. Its keys would be typed into a window on the same machine - quite possibly that speaker's own terminal, which would read them as input and send them straight back, so the two would drive each other with nobody touching a keyboard. Aiming the keys does not make that safe: a second terminal is an application like any other, and following the one you last used can land on it. `a` cannot get it either: enabling everyone leaves it logging.
 
-Under `--dry-run` nothing is pressed at all, so there is nothing to feed back: a local speaker arrives logging like any other, and a speaker you enable is shown as `logging`, because that is all that is happening to its keys.
+Under `--dry-run` nothing is pressed at all, so there is nothing to feed back: a local speaker arrives logging like any other, and a speaker you enable is shown as `logging`, because that's  all that's  happening to its keys.
 
 Both commands accept `--server` if you are running your own signalling Worker.
 
@@ -108,7 +129,9 @@ Both commands accept `--server` if you are running your own signalling Worker.
 
 Speakers run anywhere. `nsp speak` is pure Go, and reads its keys from the TUI's own input rather than from the system, so it needs no permission, does not watch the keyboard, and does not interfere with anything else on the machine.
 
-Presenting is macOS only for now, because pressing a key is the one thing nsp has to ask the operating system to do. On macOS that goes through CoreGraphics, and macOS will ask for **Accessibility permission** for whichever terminal you present from. Nothing else in nsp needs a permission of any kind.
+Presenting is macOS only for now, because pressing a key is the one thing nsp has to ask the operating system to do. On macOS that goes through CoreGraphics, and macOS will ask for **Accessibility permission** for whichever terminal you present from. Aiming those keys at an application and listening for the global hotkeys go through the same framework and the same permission. Nothing else in nsp needs a permission of any kind.
+
+Finding which application is in front reads the window list, which needs no permission as long as window *names* are not asked for - so nsp asks only for the owner and the layer, and never triggers a Screen Recording prompt.
 
 `nsp present` on another platform fails immediately with an explanation rather than silently receiving keys and doing nothing. `--dry-run` works everywhere.
 
@@ -118,11 +141,11 @@ There is no cgo anywhere in the build - CoreGraphics is loaded at runtime rather
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build ./cmd/nsp
 ```
 
-Adding a platform means one file in [internal/keys](./internal/keys): Windows wants `SendInput` through `user32.dll`, Linux wants `/dev/uinput`. Neither needs cgo either.
+Adding a platform means one file in [internal/keys](./internal/keys): Windows wants `SendInput` through `user32.dll`, Linux wants `/dev/uinput`. One more in [internal/desktop](./internal/desktop) brings the aiming and the hotkeys with it: Windows wants `GetForegroundWindow` and a `WH_KEYBOARD_LL` hook, Linux wants whatever its compositor offers. None of them needs cgo either, and a platform that implements only the first still presents - it just follows focus, as nsp always did.
 
 ### Signalling server
 
-The hosted one is at `signal.nextslideplease.run`, and that is what `nsp` talks to unless told otherwise.
+The hosted one is at `signal.nextslideplease.run`, and that's  what `nsp` talks to unless told otherwise.
 
 The Worker lives in [signal](./signal). It pairs peers by code using a Durable Object, relays their SDP, and hands out ICE servers. It uses the WebSocket Hibernation API, so a presenter waiting to be joined costs nothing while idle.
 
@@ -209,7 +232,7 @@ go run ./cmd/nsp speak --code 1234 --server http://localhost:8787 --name alice
 go run ./cmd/nsp speak --code 1234 --server http://localhost:8787 --name bob
 ```
 
-**Use `--dry-run` if the presenter is on the same machine as a speaker.** It shows the keys the presenter receives instead of pressing them. Without it, the key the presenter synthesises lands in whichever window has focus - and if that is a speaker's terminal, the two feed each other in a loop. A presenter that is pressing keys for real recognises a speaker on its own machine and holds it to logging for exactly this reason, so without `--dry-run` the speakers above can watch keys arrive but never move a slide.
+**Use `--dry-run` if the presenter is on the same machine as a speaker.** It shows the keys the presenter receives instead of pressing them. Without it, the key the presenter synthesises lands in whichever window has focus - and if that's  a speaker's terminal, the two feed each other in a loop. A presenter that's  pressing keys for real recognises a speaker on its own machine and holds it to logging for exactly this reason, so without `--dry-run` the speakers above can watch keys arrive but never move a slide.
 
 `--dry-run` exercises everything except the final keypress: signalling, ICE, the data channel, and the mute toggles. It also tells you whether a missing slide advance is a connection problem or an Accessibility permission problem.
 

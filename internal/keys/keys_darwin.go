@@ -33,6 +33,7 @@ var (
 	createKeyboardEvent func(source uintptr, keycode uint16, keyDown bool) uintptr
 	setFlags            func(event uintptr, flags uint64)
 	postEvent           func(tap uint32, event uintptr)
+	postEventToPID      func(pid int32, event uintptr)
 	release             func(ptr uintptr)
 
 	// Serialises the down/up pair. Several speakers can be enabled at once,
@@ -56,13 +57,14 @@ func load() error {
 		purego.RegisterLibFunc(&createKeyboardEvent, lib, "CGEventCreateKeyboardEvent")
 		purego.RegisterLibFunc(&setFlags, lib, "CGEventSetFlags")
 		purego.RegisterLibFunc(&postEvent, lib, "CGEventPost")
+		purego.RegisterLibFunc(&postEventToPID, lib, "CGEventPostToPid")
 		purego.RegisterLibFunc(&release, lib, "CFRelease")
 	})
 
 	return loadErr
 }
 
-func press(key string) error {
+func pressTo(pid int32, key string) error {
 	if err := load(); err != nil {
 		return err
 	}
@@ -75,20 +77,25 @@ func press(key string) error {
 	pressMu.Lock()
 	defer pressMu.Unlock()
 
-	if err := post(keycode, true); err != nil {
+	if err := post(pid, keycode, true); err != nil {
 		return err
 	}
 
 	time.Sleep(keyUpDelay)
 
-	return post(keycode, false)
+	return post(pid, keycode, false)
 }
 
 // post builds a single key event and sends it. The event is created with a
 // nil source, which inherits the current modifier state - so the flags are
 // cleared explicitly. Otherwise a presenter who happens to be holding cmd
 // would turn a speaker's right arrow into cmd+right.
-func post(keycode uint16, down bool) error {
+//
+// A pid of zero posts to the HID tap, which is the hardware's own path and
+// so lands in whichever window has focus. Any other pid delivers to that
+// process alone, whether or not it is in front - which is what lets the
+// presenter bring their own list forward without the slides going deaf.
+func post(pid int32, keycode uint16, down bool) error {
 	event := createKeyboardEvent(0, keycode, down)
 	if event == 0 {
 		return fmt.Errorf("creating keyboard event for keycode %d", keycode)
@@ -96,7 +103,12 @@ func post(keycode uint16, down bool) error {
 	defer release(event)
 
 	setFlags(event, 0)
-	postEvent(hidEventTap, event)
+
+	if pid == 0 {
+		postEvent(hidEventTap, event)
+	} else {
+		postEventToPID(pid, event)
+	}
 
 	return nil
 }
